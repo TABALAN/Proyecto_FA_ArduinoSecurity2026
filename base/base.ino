@@ -8,12 +8,11 @@
 
  Este programa contiene la arquitectura general del proyecto.
 
- El código está INCOMPLETO intencionalmente.
-
  Durante los siguientes laboratorios se implementarán
  progresivamente las funciones marcadas como:
 
-                         TODO
+ - Inicialización de pantalla LCD.
+ - Lectura de tarjeta RFID.
 
  Al finalizar los laboratorios, este programa se habrá
  convertido en el sistema completo de control de acceso.
@@ -147,20 +146,21 @@ char teclas[4][4] = {
 // ==============================================================
 
 // UID obtenido del RC522
-
 String UIDLeido = "";
 
+// Tamaño del UID y almacenar lo que leemos
+const byte TAMANO_UID = 4;
+byte uidLeido[4];
 
 // PIN introducido mediante el keypad
-
 char pinIngresado[5] = "";
-
 byte posicionPIN = 0;
 
-
 // Número de intentos incorrectos
-
 byte intentosFallidos = 0;
+
+// Indica si el acceso fue denegado por tarjeta inválida (true) o PIN incorrecto (false)
+bool tarjetaInvalida = false;
 
 
 // ==============================================================
@@ -307,31 +307,68 @@ char leerTeclado()
 
 
 // ==============================================================
-// 11. LECTURA DEL RFID
+// 11. LECTURA DEL RFID Y REGISTRO DE USUARIOS
 // ==============================================================
+
+/*
+ Cada usuario tiene:
+   - uid : identificador único de su tarjeta/llavero RFID (4 bytes)
+   - pin : código numérico de 4 dígitos asociado
+
+ Para agregar un usuario nuevo, añadir una entrada al arreglo
+ y actualizar NUM_USUARIOS.
+*/
+
+struct Usuario {
+  byte uid[TAMANO_UID];
+  char pin[5];
+};
+
+Usuario usuarios[] = {
+  {{0x45, 0x7A, 0xD7, 0x06}, "1234"} //Usuario 1 - Tarjeta Blanca
+};
+
+const byte NUM_USUARIOS = sizeof(usuarios) / sizeof(usuarios[0]);
+
+// Índice del usuario identificado (se llena al validar la tarjeta)
+byte usuarioActual = 0;
 
 String leerTarjeta()
 {
   /*
-   TODO - LABORATORIO RFID
+   Lectura del módulo RC522.
 
-   Utilizar el módulo RC522.
+   1. Verifica si hay una nueva tarjeta presente.
+   2. Lee el UID de la tarjeta.
+   3. Copia los bytes al arreglo global uidLeido[].
+   4. Construye y retorna el UID como String hexadecimal.
+   5. Detiene la comunicación con la tarjeta.
 
-   El algoritmo deberá:
-
-   1. Detectar si existe una nueva tarjeta.
-   2. Leer el identificador UID.
-   3. Recorrer los bytes del UID.
-   4. Convertirlos a una representación que pueda
-      utilizar el programa.
-   5. Retornar el UID.
-
-   Si no existe una tarjeta:
-
-       return "";
+   Retorna "" si no hay tarjeta presente.
   */
 
-  return "";
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial())
+    return "";
+
+  String uid = "";
+
+  for (byte i = 0; i < rfid.uid.size; i++)
+  {
+    // Guardar cada byte en el arreglo global para comparación posterior
+    uidLeido[i] = rfid.uid.uidByte[i];
+
+    // Agregar cero a la izquierda si el byte es menor a 0x10
+    if (rfid.uid.uidByte[i] < 0x10) uid += "0";
+
+    uid += String(rfid.uid.uidByte[i], HEX);
+  }
+
+  // Detener comunicación con la tarjeta actual
+  rfid.PICC_HaltA();
+
+  mostrarUID();
+
+  return uid;
 }
 
 
@@ -339,19 +376,59 @@ String leerTarjeta()
 // 12. VALIDACIÓN DE TARJETA
 // ==============================================================
 
+void mostrarUID() //Para ver en la terminal el UID detectado
+{
+  Serial.print("UID detectado: ");
+
+  for (byte i = 0; i < rfid.uid.size; i++)
+  {
+    if (rfid.uid.uidByte[i] < 0x10)
+    {
+      Serial.print("0");
+    }
+
+    Serial.print(rfid.uid.uidByte[i], HEX);
+    Serial.print(" ");
+  }
+
+  Serial.println();
+}
+
 bool tarjetaAutorizada(String uid)
 {
   /*
-   TODO - LABORATORIO RFID
+   Busca el UID leído en el arreglo de usuarios registrados.
 
-   Determinar si el UID recibido pertenece
-   a una tarjeta autorizada.
+   Recorre cada usuario y compara byte a byte su UID
+   con el contenido de uidLeido[].
 
-   Retornar:
+   Si encuentra coincidencia:
+     - Guarda el índice en usuarioActual (para usar su PIN después)
+     - Retorna true
 
-       true  -> tarjeta autorizada
-       false -> tarjeta no autorizada
+   Si ningún usuario coincide, retorna false.
   */
+
+  for (byte u = 0; u < NUM_USUARIOS; u++)
+  {
+    bool coincide = true;
+
+    for (byte i = 0; i < TAMANO_UID; i++)
+    {
+      if (uidLeido[i] != usuarios[u].uid[i])
+      {
+        coincide = false;
+        break;
+      }
+    }
+
+    if (coincide)
+    {
+      // Guardar qué usuario fue identificado
+      usuarioActual = u;
+      return true;
+    }
+  }
 
   return false;
 }
@@ -518,21 +595,24 @@ void activarAlarma()
 
 void reiniciarSistema()
 {
+
+  // Limpiar variables de sesión
   UIDLeido = "";
-
   posicionPIN = 0;
-
   pinIngresado[0] = '\0';
+  usuarioActual = 0;
 
 
+  // Mostrar pantalla principal de espera
+  // Línea 0: hora actual (placeholder hasta integrar RTC)
+  // Línea 1: instrucción al usuario
   lcd.clear();
 
   lcd.setCursor(0, 0);
-  lcd.print("SISTEMA URL");
+  lcd.print("00:00");
 
   lcd.setCursor(0, 1);
-  lcd.print("ACERQUE TARJETA");
-
+  lcd.print("PRESENTE TARJETA");
 
   estado = ESPERANDO_RFID;
 }
@@ -619,7 +699,7 @@ void setup()
   lcd.clear();
 
   lcd.setCursor(0, 0);
-  lcd.print("SISTEMA URL");
+  lcd.print("SISTEMA ACCESO");
 
   lcd.setCursor(0, 1);
   lcd.print("INICIANDO...");
@@ -677,6 +757,7 @@ void loop()
         }
         else
         {
+          tarjetaInvalida = true; //Para distinguir entre tarjeta inválida y PIN incorrecto
           estado = ACCESO_DENEGADO;
         }
       }
@@ -711,7 +792,7 @@ void loop()
       else
       {
         intentosFallidos++;
-
+        tarjetaInvalida = false;
         estado = ACCESO_DENEGADO;
       }
 
@@ -753,17 +834,29 @@ void loop()
 
       lcd.clear();
 
-      lcd.setCursor(0, 0);
-      lcd.print("ACCESO");
+      if (tarjetaInvalida)
+      {
+        // Tarjeta no registrada en el sistema
+        lcd.setCursor(0, 0);
+        lcd.print("TARJETA INVALIDA");
 
-      lcd.setCursor(0, 1);
-      lcd.print("DENEGADO");
+        lcd.setCursor(0, 1);
+        lcd.print("ACCESO DENEGADO");
+      }
+      else
+      {
+        // PIN incorrecto
+        lcd.setCursor(0, 0);
+        lcd.print("PIN INCORRECTO");
 
+        lcd.setCursor(0, 1);
+        lcd.print("ACCESO DENEGADO");
+      }
 
+      // Encender LED rojo y emitir sonido de error
       encenderLED(1);
 
       sonidoError();
-
 
       delay(1500);
 
