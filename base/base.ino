@@ -239,6 +239,34 @@ void indicarEstado(byte valorLED)
 // ==============================================================
 
 /*
+ Cada usuario tiene:
+   - uid : identificador único de su tarjeta/llavero RFID (4 bytes)
+   - pin : código numérico de 4 dígitos asociado
+
+ Para agregar un usuario nuevo, añadir una entrada al arreglo
+ y actualizar NUM_USUARIOS.
+*/
+
+struct Usuario {
+  byte uid[TAMANO_UID];
+  char pin[5];
+};
+
+Usuario usuarios[] = {
+  {{0x45, 0x7A, 0xD7, 0x06}, "1234"} //Usuario 1 - Tarjeta Blanca
+};
+
+const byte NUM_USUARIOS = sizeof(usuarios) / sizeof(usuarios[0]);
+
+// Índice del usuario identificado (se llena al validar la tarjeta)
+byte usuarioActual = 0;
+
+// Prototipos manuales para evitar conflicto con el generador de Arduino
+void guardarUsuarioEEPROM(byte indice, byte uid[], const char pin[]);
+void cargarUsuarioEEPROM(byte indice, Usuario *u);
+void inicializarEEPROM();
+
+/*
  Layout en EEPROM (por usuario):
 
    Dirección base = u * (TAMANO_UID + 4)
@@ -267,18 +295,18 @@ void guardarUsuarioEEPROM(byte indice, byte uid[], const char pin[])
     EEPROM.write(base + TAMANO_UID + i, pin[i]);
 }
 
-void cargarUsuarioEEPROM(byte indice, Usuario &u)
+void cargarUsuarioEEPROM(byte indice, Usuario *u)
 {
   // Calcular dirección base del usuario en EEPROM
   int base = indice * TAMANO_REGISTRO;
 
   // Leer los 4 bytes del UID
   for (byte i = 0; i < TAMANO_UID; i++)
-    u.uid[i] = EEPROM.read(base + i);
+    u->uid[i] = EEPROM.read(base + i);
 
   // Leer los 4 dígitos del PIN más el terminador nulo
   for (byte i = 0; i < 5; i++)
-    u.pin[i] = EEPROM.read(base + TAMANO_UID + i);
+    u->pin[i] = EEPROM.read(base + TAMANO_UID + i);
 }
 
 void inicializarEEPROM()
@@ -296,7 +324,7 @@ void inicializarEEPROM()
   {
     // EEPROM ya tiene datos: cargar usuarios desde ahí
     for (byte u = 0; u < NUM_USUARIOS; u++)
-      cargarUsuarioEEPROM(u, usuarios[u]);
+      cargarUsuarioEEPROM(u, &usuarios[u]);
 
     return;
   }
@@ -364,32 +392,8 @@ char leerTeclado()
 
 
 // ==============================================================
-// 12. LECTURA DEL RFID Y REGISTRO DE USUARIOS
+// 12. LECTURA DEL RFID
 // ==============================================================
-
-/*
- Cada usuario tiene:
-   - uid : identificador único de su tarjeta/llavero RFID (4 bytes)
-   - pin : código numérico de 4 dígitos asociado
-
- Para agregar un usuario nuevo, añadir una entrada al arreglo
- y actualizar NUM_USUARIOS.
-*/
-
-struct Usuario {
-  byte uid[TAMANO_UID];
-  char pin[5];
-};
-
-Usuario usuarios[] = {
-  {{0x45, 0x7A, 0xD7, 0x06}, "1234"} //Usuario 1 - Tarjeta Blanca
-};
-
-const byte NUM_USUARIOS = sizeof(usuarios) / sizeof(usuarios[0]);
-
-// Índice del usuario identificado (se llena al validar la tarjeta)
-byte usuarioActual = 0;
-
 String leerTarjeta()
 {
   /*
