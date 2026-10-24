@@ -99,32 +99,30 @@ MFRC522 rfid(RFID_SS, RFID_RST);
 // ==============================================================
 
 /*
+ Cada bit del registro corresponde a un LED de estado.
+ Solo un LED estará encendido a la vez.
 
                   74HC595
 
-             Q0 ─────► Keypad R1
-             Q1 ─────► Keypad R2
-             Q2 ─────► Keypad R3
-             Q3 ─────► Keypad R4
-
-             Q4 ─────► LED verde
-             Q5 ─────► LED rojo
-             Q6 ─────► LED amarillo
-             Q7 ─────► LED azul
-
+             Q0 ─────► LED 1 - Inicio
+             Q1 ─────► LED 2 - Esperando RFID
+             Q2 ─────► LED 3 - Validando RFID
+             Q3 ─────► LED 4 - Esperando PIN
+             Q4 ─────► LED 5 - Validando PIN
+             Q5 ─────► LED 6 - Autorizado
+             Q6 ─────► LED 7 - Denegado
+             Q7 ─────► LED 8 - Alarma
 
  Bits:
 
        7   6   5   4   3   2   1   0
      ┌───┬───┬───┬───┬───┬───┬───┬───┐
-     │AZ │AM │RO │VE │R4 │R3 │R2 │R1 │
+     │AL │DE │AU │VP │EP │VR │ER │IN │
      └───┴───┴───┴───┴───┴───┴───┴───┘
 
 */
 
-// Inicialmente las cuatro filas están HIGH.
-
-byte registro = B00001111;
+byte registro = B00000001; // Inicio: LED 1 encendido
 
 
 // ==============================================================
@@ -211,50 +209,109 @@ void actualizarRegistro()
 
 
 // ==============================================================
-// 8. CONTROL DE LEDs
+// 8. CONTROL DE LEDs DE ESTADO
 // ==============================================================
 
-void apagarLEDs()
+/*
+ Envía al 74HC595 el valor binario correspondiente al estado
+ activo, encendiendo únicamente el LED asociado.
+
+     Estado           Valor       LED
+     Inicio         00000001      1
+     Esperando RFID 00000010      2
+     Validando RFID 00000100      3
+     Esperando PIN  00001000      4
+     Validando PIN  00010000      5
+     Autorizado     00100000      6
+     Denegado       01000000      7
+     Alarma         10000000      8
+*/
+
+void indicarEstado(byte valorLED)
 {
-  /*
-   TODO - REGISTROS / OPERACIONES BINARIAS
-
-   Los LEDs se encuentran conectados a Q4-Q7.
-
-   Deben apagarse SIN modificar Q0-Q3,
-   ya que esos bits controlan las filas
-   del teclado.
-
-   Modificar la variable:
-
-       registro
-
-   y posteriormente actualizar el 74HC595.
-  */
-}
-
-
-void encenderLED(byte numero)
-{
-  /*
-   TODO - REGISTROS / OPERACIONES BINARIAS
-
-   Encender solamente uno de los LEDs.
-
-       numero = 0 -> Q4 -> Verde
-       numero = 1 -> Q5 -> Rojo
-       numero = 2 -> Q6 -> Amarillo
-       numero = 3 -> Q7 -> Azul
-
-   IMPORTANTE:
-
-   No modificar Q0-Q3.
-  */
+  registro = valorLED;
+  actualizarRegistro();
 }
 
 
 // ==============================================================
-// 9. SELECCIÓN DE FILA DEL KEYPAD
+// 9. EEPROM - ALMACENAMIENTO DE USUARIOS
+// ==============================================================
+
+/*
+ Layout en EEPROM (por usuario):
+
+   Dirección base = u * (TAMANO_UID + 4)
+
+   [base + 0 .. base + 3] -> UID  (4 bytes)
+   [base + 4 .. base + 7] -> PIN  (4 chars + null)
+
+   Ejemplo con 1 usuario:
+     Dirección 0-3  -> UID
+     Dirección 4-7  -> PIN
+*/
+
+const byte TAMANO_REGISTRO = TAMANO_UID + 5; // 4 bytes UID + 4 chars PIN + null
+
+void guardarUsuarioEEPROM(byte indice, byte uid[], const char pin[])
+{
+  // Calcular dirección base del usuario en EEPROM
+  int base = indice * TAMANO_REGISTRO;
+
+  // Escribir los 4 bytes del UID
+  for (byte i = 0; i < TAMANO_UID; i++)
+    EEPROM.write(base + i, uid[i]);
+
+  // Escribir los 4 dígitos del PIN más el terminador nulo
+  for (byte i = 0; i < 5; i++)
+    EEPROM.write(base + TAMANO_UID + i, pin[i]);
+}
+
+void cargarUsuarioEEPROM(byte indice, Usuario &u)
+{
+  // Calcular dirección base del usuario en EEPROM
+  int base = indice * TAMANO_REGISTRO;
+
+  // Leer los 4 bytes del UID
+  for (byte i = 0; i < TAMANO_UID; i++)
+    u.uid[i] = EEPROM.read(base + i);
+
+  // Leer los 4 dígitos del PIN más el terminador nulo
+  for (byte i = 0; i < 5; i++)
+    u.pin[i] = EEPROM.read(base + TAMANO_UID + i);
+}
+
+void inicializarEEPROM()
+{
+  /*
+   Escribe los usuarios del arreglo usuarios[] en EEPROM
+   solo si la EEPROM no ha sido inicializada antes.
+
+   Usa la dirección 511 como bandera:
+     0xAA -> ya inicializada, no sobreescribir
+     otro -> primera vez, escribir usuarios
+  */
+
+  if (EEPROM.read(511) == 0xAA)
+  {
+    // EEPROM ya tiene datos: cargar usuarios desde ahí
+    for (byte u = 0; u < NUM_USUARIOS; u++)
+      cargarUsuarioEEPROM(u, usuarios[u]);
+
+    return;
+  }
+
+  // Primera vez: escribir los usuarios definidos en el arreglo
+  for (byte u = 0; u < NUM_USUARIOS; u++)
+    guardarUsuarioEEPROM(u, usuarios[u].uid, usuarios[u].pin);
+
+  // Marcar EEPROM como inicializada
+  EEPROM.write(511, 0xAA);
+}
+
+
+// ==============================================================
+// 10. SELECCIÓN DE FILA DEL KEYPAD
 // ==============================================================
 
 void seleccionarFila(byte fila)
@@ -279,7 +336,7 @@ void seleccionarFila(byte fila)
 
 
 // ==============================================================
-// 10. LECTURA DEL KEYPAD
+// 11. LECTURA DEL KEYPAD
 // ==============================================================
 
 char leerTeclado()
@@ -307,7 +364,7 @@ char leerTeclado()
 
 
 // ==============================================================
-// 11. LECTURA DEL RFID Y REGISTRO DE USUARIOS
+// 12. LECTURA DEL RFID Y REGISTRO DE USUARIOS
 // ==============================================================
 
 /*
@@ -373,7 +430,7 @@ String leerTarjeta()
 
 
 // ==============================================================
-// 12. VALIDACIÓN DE TARJETA
+// 13. VALIDACIÓN DE TARJETA
 // ==============================================================
 
 void mostrarUID() //Para ver en la terminal el UID detectado
@@ -435,7 +492,7 @@ bool tarjetaAutorizada(String uid)
 
 
 // ==============================================================
-// 13. CAPTURA DEL PIN
+// 14. CAPTURA DEL PIN
 // ==============================================================
 
 bool leerPIN()
@@ -479,7 +536,7 @@ bool leerPIN()
 
 
 // ==============================================================
-// 14. VALIDACIÓN DEL PIN
+// 15. VALIDACIÓN DEL PIN
 // ==============================================================
 
 bool validarPIN()
@@ -507,7 +564,7 @@ bool validarPIN()
 
 
 // ==============================================================
-// 15. ABRIR PUERTA
+// 16. ABRIR PUERTA
 // ==============================================================
 
 void abrirPuerta()
@@ -522,7 +579,7 @@ void abrirPuerta()
 
 
 // ==============================================================
-// 16. CERRAR PUERTA
+// 17. CERRAR PUERTA
 // ==============================================================
 
 void cerrarPuerta()
@@ -537,7 +594,7 @@ void cerrarPuerta()
 
 
 // ==============================================================
-// 17. SONIDO DE ACCESO CORRECTO
+// 18. SONIDO DE ACCESO CORRECTO
 // ==============================================================
 
 void sonidoCorrecto()
@@ -552,7 +609,7 @@ void sonidoCorrecto()
 
 
 // ==============================================================
-// 18. SONIDO DE ERROR
+// 19. SONIDO DE ERROR
 // ==============================================================
 
 void sonidoError()
@@ -567,7 +624,7 @@ void sonidoError()
 
 
 // ==============================================================
-// 19. ALARMA
+// 20. ALARMA
 // ==============================================================
 
 void activarAlarma()
@@ -590,7 +647,7 @@ void activarAlarma()
 
 
 // ==============================================================
-// 20. REINICIAR CICLO DE AUTENTICACIÓN
+// 21. REINICIAR CICLO DE AUTENTICACIÓN
 // ==============================================================
 
 void reiniciarSistema()
@@ -615,11 +672,12 @@ void reiniciarSistema()
   lcd.print("PRESENTE TARJETA");
 
   estado = ESPERANDO_RFID;
+  indicarEstado(B00000010); // LED 2: Esperando RFID
 }
 
 
 // ==============================================================
-// 21. SETUP
+// 22. SETUP
 // ==============================================================
 
 void setup()
@@ -693,8 +751,17 @@ void setup()
 
 
   // ----------------------------------------------------------
+  // EEPROM
+  // ----------------------------------------------------------
+
+  inicializarEEPROM();
+
+
+  // ----------------------------------------------------------
   // INICIO
   // ----------------------------------------------------------
+
+  indicarEstado(B00000001); // LED 1: Inicio
 
   lcd.clear();
 
@@ -711,7 +778,7 @@ void setup()
 
 
 // ==============================================================
-// 22. LOOP
+// 23. LOOP
 // ==============================================================
 
 void loop()
@@ -743,8 +810,12 @@ void loop()
 
       if (UIDLeido != "")
       {
+        indicarEstado(B00000100); // LED 3: Validando RFID
+
         if (tarjetaAutorizada(UIDLeido))
         {
+          indicarEstado(B00001000); // LED 4: Esperando PIN
+
           lcd.clear();
 
           lcd.setCursor(0, 0);
@@ -757,7 +828,8 @@ void loop()
         }
         else
         {
-          tarjetaInvalida = true; //Para distinguir entre tarjeta inválida y PIN incorrecto
+          indicarEstado(B01000000); // LED 7: Denegado
+          tarjetaInvalida = true;
           estado = ACCESO_DENEGADO;
         }
       }
@@ -773,6 +845,7 @@ void loop()
 
       if (leerPIN())
       {
+        indicarEstado(B00010000); // LED 5: Validando PIN
         estado = VALIDANDO_PIN;
       }
 
@@ -787,10 +860,12 @@ void loop()
 
       if (validarPIN())
       {
+        indicarEstado(B00100000); // LED 6: Autorizado
         estado = ACCESO_AUTORIZADO;
       }
       else
       {
+        indicarEstado(B01000000); // LED 7: Denegado
         intentosFallidos++;
         tarjetaInvalida = false;
         estado = ACCESO_DENEGADO;
@@ -805,6 +880,8 @@ void loop()
 
     case ACCESO_AUTORIZADO:
 
+      indicarEstado(B00100000); // LED 6: Autorizado
+
       lcd.clear();
 
       lcd.setCursor(0, 0);
@@ -813,8 +890,6 @@ void loop()
       lcd.setCursor(0, 1);
       lcd.print("AUTORIZADO");
 
-
-      encenderLED(0);
 
       sonidoCorrecto();
 
@@ -853,9 +928,6 @@ void loop()
         lcd.print("ACCESO DENEGADO");
       }
 
-      // Encender LED rojo y emitir sonido de error
-      encenderLED(1);
-
       sonidoError();
 
       delay(1500);
@@ -867,8 +939,6 @@ void loop()
       }
       else
       {
-        apagarLEDs();
-
         reiniciarSistema();
       }
 
@@ -892,8 +962,6 @@ void loop()
 
       cerrarPuerta();
 
-      apagarLEDs();
-
       intentosFallidos = 0;
 
 
@@ -907,6 +975,8 @@ void loop()
     // ========================================================
 
     case ALARMA:
+
+      indicarEstado(B10000000); // LED 8: Alarma
 
       lcd.clear();
 
