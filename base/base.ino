@@ -13,6 +13,9 @@
 
  - Inicialización de pantalla LCD.
  - Lectura de tarjeta RFID.
+ - Lectura de PIN mediante keypad matricial.
+ - uso de memoria EEPROM.
+ - Control de LEDs mediante registro de desplazamiento 74HC595.
 
  Al finalizar los laboratorios, este programa se habrá
  convertido en el sistema completo de control de acceso.
@@ -36,51 +39,46 @@
  ARDUINO UNO
  --------------------------------------------------------------
 
- D0  -> Serial RX
- D1  -> Serial TX
+ D0  -> Keypad F1
+ D1  -> Keypad F2
+ D2  -> Keypad F3
+ D3  -> Keypad F4
 
- D2  -> Buzzer pasivo
- D3  -> Botón de diagnóstico
- D4  -> Servo
+ D4  -> Keypad C1
+ D5  -> Keypad C2
+ D6  -> Keypad C3
+ D7  -> Keypad C4
 
- D5  -> Libre
+ D8  -> Servo
 
- D6  -> RFID RST
-
- D7  -> 74HC595 DATA
- D8  -> 74HC595 CLOCK
- D9  -> 74HC595 LATCH
-
+ D9  -> RFID RST
  D10 -> RFID SDA / SS
  D11 -> RFID MOSI
  D12 -> RFID MISO
  D13 -> RFID SCK
 
- A0  -> Keypad C1
- A1  -> Keypad C2
- A2  -> Keypad C3
- A3  -> Keypad C4
+ A0  -> Buzzer pasivo
+ A1  -> 74HC595 DATA
+ A2  -> 74HC595 CLOCK
+ A3  -> 74HC595 LATCH
 
  A4  -> LCD SDA
  A5  -> LCD SCL
 */
 
 
-const byte PIN_BUZZER = 2;
-const byte PIN_DIAG   = 3;
-const byte PIN_SERVO  = 4;
+const byte PIN_BUZZER = A0;
+const byte PIN_SERVO  = 8;
 
-const byte RFID_RST = 6;
+const byte RFID_RST = 9;
+const byte RFID_SS  = 10;
 
-const byte DATA  = 7;
-const byte CLOCK = 8;
-const byte LATCH = 9;
+const byte DATA  = A1;
+const byte CLOCK = A2;
+const byte LATCH = A3;
 
-const byte RFID_SS = 10;
-
-const byte columnas[4] = {
-  A0, A1, A2, A3
-};
+const byte filas[4]    = {0, 1, 2, 3};
+const byte columnas[4] = {4, 5, 6, 7};
 
 
 // ==============================================================
@@ -137,7 +135,6 @@ char teclas[4][4] = {
   {'*', '0', '#', 'D'}
 
 };
-
 
 // ==============================================================
 // 5. VARIABLES DEL SISTEMA
@@ -345,21 +342,17 @@ void inicializarEEPROM()
 void seleccionarFila(byte fila)
 {
   /*
-   TODO - LABORATORIO KEYPAD
+   Coloca todas las filas en HIGH y luego
+   baja únicamente la fila indicada a LOW.
 
-   Para detectar una tecla:
-
-   1. Colocar Q0-Q3 en HIGH.
-
-   2. Colocar únicamente la fila que se desea
-      consultar en LOW.
-
-   3. Enviar el nuevo valor al 74HC595.
-
-   Pista:
-
-       bitClear()
+   Cuando una tecla es presionada, la columna
+   correspondiente cae a LOW gracias al pull-up.
   */
+
+  for (byte f = 0; f < 4; f++)
+    digitalWrite(filas[f], HIGH);
+
+  digitalWrite(filas[fila], LOW);
 }
 
 
@@ -370,22 +363,33 @@ void seleccionarFila(byte fila)
 char leerTeclado()
 {
   /*
-   TODO - LABORATORIO KEYPAD
+   Barrido de la matriz 4x4:
 
-   Implementar el barrido de la matriz 4x4.
+   1. Selecciona una fila (LOW).
+   2. Lee las cuatro columnas.
+   3. Si una columna está en LOW, hay tecla presionada.
+   4. Espera a que se suelte (antirebote).
+   5. Retorna el carácter correspondiente.
 
-   El algoritmo deberá:
-
-   1. Seleccionar una fila.
-   2. Leer las cuatro columnas.
-   3. Determinar qué tecla fue presionada.
-   4. Manejar el rebote de la tecla.
-   5. Retornar el carácter correspondiente.
-
-   Si ninguna tecla fue presionada:
-
-       return 0;
+   Si ninguna tecla fue presionada retorna 0.
   */
+
+  for (byte f = 0; f < 4; f++)
+  {
+    seleccionarFila(f);
+
+    for (byte c = 0; c < 4; c++)
+    {
+      if (digitalRead(columnas[c]) == LOW)
+      {
+        delay(50); // antirebote
+
+        while (digitalRead(columnas[c]) == LOW); // esperar que se suelte
+
+        return teclas[f][c];
+      }
+    }
+  }
 
   return 0;
 }
@@ -427,8 +431,6 @@ String leerTarjeta()
   // Detener comunicación con la tarjeta actual
   rfid.PICC_HaltA();
 
-  mostrarUID();
-
   return uid;
 }
 
@@ -436,24 +438,6 @@ String leerTarjeta()
 // ==============================================================
 // 13. VALIDACIÓN DE TARJETA
 // ==============================================================
-
-void mostrarUID() //Para ver en la terminal el UID detectado
-{
-  Serial.print("UID detectado: ");
-
-  for (byte i = 0; i < rfid.uid.size; i++)
-  {
-    if (rfid.uid.uidByte[i] < 0x10)
-    {
-      Serial.print("0");
-    }
-
-    Serial.print(rfid.uid.uidByte[i], HEX);
-    Serial.print(" ");
-  }
-
-  Serial.println();
-}
 
 bool tarjetaAutorizada(String uid)
 {
@@ -502,38 +486,52 @@ bool tarjetaAutorizada(String uid)
 bool leerPIN()
 {
   /*
-   TODO - LABORATORIO KEYPAD / INTEGRACIÓN
+   Captura un PIN de cuatro dígitos numéricos.
 
-   Utilizar:
+   Teclas especiales:
+     * -> borra el último dígito ingresado
+     # -> confirma el PIN (solo si hay 4 dígitos)
 
-       leerTeclado()
+   El LCD muestra un asterisco por cada dígito ingresado.
+   Los caracteres no numéricos (A, B, C, D) son ignorados.
 
-   para capturar un PIN de cuatro números.
-
-   Cada número deberá almacenarse en:
-
-       pinIngresado
-
-   Cuando existan cuatro números:
-
-       return true;
-
-   Mientras el usuario continúe escribiendo:
-
-       return false;
-
-
-   SUGERENCIA:
-
-   En el LCD no mostrar los números.
-
-   Mostrar:
-
-       *
-       **
-       ***
-       ****
+   Retorna true cuando el usuario confirma con # y hay 4 dígitos.
+   Retorna false mientras el PIN no esté completo o confirmado.
   */
+
+  char tecla = leerTeclado();
+
+  if (tecla == 0) return false;
+
+  if (tecla == '*')
+  {
+    // Borrar último dígito
+    if (posicionPIN > 0)
+    {
+      posicionPIN--;
+      pinIngresado[posicionPIN] = '\0';
+
+      // Actualizar LCD: reemplazar el último * con _
+      lcd.setCursor(posicionPIN, 1);
+      lcd.print('_');
+    }
+  }
+  else if (tecla == '#')
+  {
+    // Confirmar solo si hay 4 dígitos
+    if (posicionPIN == 4) return true;
+  }
+  else if (tecla >= '0' && tecla <= '9' && posicionPIN < 4)
+  {
+    // Agregar dígito numérico
+    pinIngresado[posicionPIN] = tecla;
+    posicionPIN++;
+    pinIngresado[posicionPIN] = '\0';
+
+    // Mostrar asterisco en la posición correspondiente
+    lcd.setCursor(posicionPIN - 1, 1);
+    lcd.print('*');
+  }
 
   return false;
 }
@@ -546,24 +544,19 @@ bool leerPIN()
 bool validarPIN()
 {
   /*
-   TODO - LABORATORIO EEPROM
+   Compara el PIN ingresado contra el PIN del usuario
+   identificado por RFID, almacenado en usuarios[].
 
-   El PIN autorizado se encuentra almacenado
-   en la memoria EEPROM.
-
-   El algoritmo deberá:
-
-   1. Leer el PIN almacenado.
-   2. Compararlo con pinIngresado.
-   3. Determinar si son iguales.
-
-   Retornar:
-
-       true  -> PIN correcto
-       false -> PIN incorrecto
+   Retorna true si coinciden, false si no.
   */
 
-  return false;
+  for (byte i = 0; i < 4; i++)
+  {
+    if (pinIngresado[i] != usuarios[usuarioActual].pin[i])
+      return false;
+  }
+
+  return true;
 }
 
 
@@ -688,13 +681,6 @@ void setup()
 {
 
   // ----------------------------------------------------------
-  // SERIAL
-  // ----------------------------------------------------------
-
-  Serial.begin(9600);
-
-
-  // ----------------------------------------------------------
   // LCD
   // ----------------------------------------------------------
 
@@ -718,10 +704,16 @@ void setup()
   // KEYPAD
   // ----------------------------------------------------------
 
+  // Filas como salidas, inicialmente HIGH
   for (byte i = 0; i < 4; i++)
   {
-    pinMode(columnas[i], INPUT_PULLUP);
+    pinMode(filas[i], OUTPUT);
+    digitalWrite(filas[i], HIGH);
   }
+
+  // Columnas como entradas con pull-up
+  for (byte i = 0; i < 4; i++)
+    pinMode(columnas[i], INPUT_PULLUP);
 
 
   // ----------------------------------------------------------
@@ -729,13 +721,6 @@ void setup()
   // ----------------------------------------------------------
 
   pinMode(PIN_BUZZER, OUTPUT);
-
-
-  // ----------------------------------------------------------
-  // BOTÓN DIAGNÓSTICO
-  // ----------------------------------------------------------
-
-  pinMode(PIN_DIAG, INPUT_PULLUP);
 
 
   // ----------------------------------------------------------
@@ -823,10 +808,10 @@ void loop()
           lcd.clear();
 
           lcd.setCursor(0, 0);
-          lcd.print("TARJETA VALIDA");
+          lcd.print("INGRESE SU PIN");
 
           lcd.setCursor(0, 1);
-          lcd.print("INGRESE PIN");
+          lcd.print("____");
 
           estado = ESPERANDO_PIN;
         }
