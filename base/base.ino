@@ -16,6 +16,7 @@
  - Lectura de PIN mediante keypad matricial.
  - uso de memoria EEPROM.
  - Control de LEDs mediante registro de desplazamiento 74HC595.
+ - Validación de intentos de acceso y activación de alarma.
 
  Al finalizar los laboratorios, este programa se habrá
  convertido en el sistema completo de control de acceso.
@@ -57,7 +58,7 @@
  D12 -> RFID MISO
  D13 -> RFID SCK
 
- A0  -> Buzzer pasivo
+ A0  -> Buzzer activo
  A1  -> 74HC595 DATA
  A2  -> 74HC595 CLOCK
  A3  -> 74HC595 LATCH
@@ -596,12 +597,14 @@ void cerrarPuerta()
 
 void sonidoCorrecto()
 {
-  /*
-   TODO - LABORATORIO BUZZER
-
-   Utilizar el buzzer pasivo para generar
-   un sonido que indique acceso autorizado.
-  */
+  // Dos pulsos cortos: acceso correcto
+  digitalWrite(PIN_BUZZER, HIGH);
+  delay(200);
+  digitalWrite(PIN_BUZZER, LOW);
+  delay(100);
+  digitalWrite(PIN_BUZZER, HIGH);
+  delay(200);
+  digitalWrite(PIN_BUZZER, LOW);
 }
 
 
@@ -611,12 +614,10 @@ void sonidoCorrecto()
 
 void sonidoError()
 {
-  /*
-   TODO - LABORATORIO BUZZER
-
-   Generar un sonido diferente que permita
-   reconocer un acceso incorrecto.
-  */
+  // Un pulso largo: acceso incorrecto
+  digitalWrite(PIN_BUZZER, HIGH);
+  delay(500);
+  digitalWrite(PIN_BUZZER, LOW);
 }
 
 
@@ -626,20 +627,8 @@ void sonidoError()
 
 void activarAlarma()
 {
-  /*
-   TODO - PROYECTO FINAL
-
-   Diseñar el comportamiento de la alarma.
-
-   Puede utilizar:
-
-       - LED rojo
-       - Buzzer
-       - LCD
-
-   La implementación queda a criterio
-   de cada equipo.
-  */
+  // Enciende el buzzer de forma continua hasta que se presione 'D'
+  digitalWrite(PIN_BUZZER, HIGH);
 }
 
 
@@ -909,7 +898,6 @@ void loop()
       }
       else
       {
-        // PIN incorrecto
         lcd.setCursor(0, 0);
         lcd.print("PIN INCORRECTO");
 
@@ -970,10 +958,19 @@ void loop()
       lcd.clear();
 
       lcd.setCursor(0, 0);
-      lcd.print("!!! ALARMA !!!");
+      lcd.print("ACCESO BLOQUEADO");
 
+      lcd.setCursor(0, 1);
+      lcd.print("ALARMA ACTIVADA");
 
       activarAlarma();
+
+      // Esperar tecla 'D' para desactivar la alarma
+      while (leerTeclado() != 'D');
+
+      digitalWrite(PIN_BUZZER, LOW);
+      intentosFallidos = 0;
+      reiniciarSistema();
 
       break;
   }
