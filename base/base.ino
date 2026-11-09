@@ -567,7 +567,7 @@ bool validarPIN()
 
 void abrirPuerta()
 {
-  puerta.write(90);
+  puerta.write(100);
 }
 
 
