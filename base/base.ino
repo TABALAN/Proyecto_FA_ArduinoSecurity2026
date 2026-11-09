@@ -567,12 +567,7 @@ bool validarPIN()
 
 void abrirPuerta()
 {
-  /*
-   TODO - LABORATORIO SERVO
-
-   Mover el servo a la posición correspondiente
-   a la puerta abierta.
-  */
+  puerta.write(100);
 }
 
 
@@ -582,12 +577,7 @@ void abrirPuerta()
 
 void cerrarPuerta()
 {
-  /*
-   TODO - LABORATORIO SERVO
-
-   Mover el servo a la posición correspondiente
-   a la puerta cerrada.
-  */
+  puerta.write(0);
 }
 
 
@@ -933,14 +923,14 @@ void loop()
       lcd.setCursor(0, 0);
       lcd.print("PUERTA ABIERTA");
 
+      lcd.setCursor(0, 1);
+      lcd.print("# PARA CERRAR");
 
-      delay(3000);
-
+      while (leerTeclado() != '#');
 
       cerrarPuerta();
 
       intentosFallidos = 0;
-
 
       reiniciarSistema();
 
