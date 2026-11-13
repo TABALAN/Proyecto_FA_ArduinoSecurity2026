@@ -637,12 +637,12 @@ void reiniciarSistema()
 
 
   // Mostrar pantalla principal de espera
-  // Línea 0: hora actual (placeholder hasta integrar RTC)
+  // Línea 0: Inicialización
   // Línea 1: instrucción al usuario
   lcd.clear();
 
   lcd.setCursor(0, 0);
-  lcd.print("00:00");
+  lcd.print("CONTROL ACCESO");
 
   lcd.setCursor(0, 1);
   lcd.print("PRESENTE TARJETA");
@@ -798,6 +798,7 @@ void loop()
         {
           indicarEstado(B01000000); // LED 7: Denegado
           tarjetaInvalida = true;
+          intentosFallidos = 0;
           estado = ACCESO_DENEGADO;
         }
       }
@@ -879,7 +880,6 @@ void loop()
 
       if (tarjetaInvalida)
       {
-        // Tarjeta no registrada en el sistema
         lcd.setCursor(0, 0);
         lcd.print("TARJETA INVALIDA");
 
